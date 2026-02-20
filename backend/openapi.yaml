@@ -1,0 +1,603 @@
+openapi: 3.1.0
+info:
+  title: PastoTech API
+  description: |
+    REST API for PastoTech — GPS-based livestock management platform.
+
+    ## Authentication
+    All endpoints (except `/auth/login` and `/auth/register`) require a Bearer JWT token
+    in the `Authorization` header.
+
+    IoT devices authenticate using an `X-API-Key` header.
+
+    ## Multi-tenancy
+    Every request is scoped to the farm extracted from the JWT claims (`farm_id`).
+    You cannot access data from other farms.
+
+    ## Freemium limits
+    Free plans allow up to 5 active animals. Exceeding this limit returns HTTP 402.
+  version: 1.0.0
+  contact:
+    name: PastoTech Support
+    url: https://pastotech.io
+
+servers:
+  - url: https://api.pastotech.io
+    description: Production
+  - url: http://localhost:8080
+    description: Local development
+
+security:
+  - bearerAuth: []
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    apiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+
+    Pagination:
+      type: object
+      properties:
+        data:
+          type: array
+          items: {}
+        total: { type: integer }
+        page: { type: integer }
+        limit: { type: integer }
+
+    Animal:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        ear_tag: { type: string }
+        name: { type: string, nullable: true }
+        sex: { type: string, enum: [male, female] }
+        breed: { type: string, nullable: true }
+        birth_date: { type: string, format: date, nullable: true }
+        status: { type: string, enum: [active, sold, dead, transferred] }
+        herd_id: { type: string, format: uuid, nullable: true }
+        herd_name: { type: string, nullable: true }
+        zone_id: { type: string, format: uuid, nullable: true }
+        zone_name: { type: string, nullable: true }
+        last_lat: { type: number, format: float, nullable: true }
+        last_lng: { type: number, format: float, nullable: true }
+        farm_id: { type: string, format: uuid }
+
+    Zone:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        area_ha: { type: number }
+        grass_type: { type: string, nullable: true }
+        animal_count: { type: integer }
+        ugm_ha: { type: number }
+        is_active: { type: boolean }
+
+    HealthEvent:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        event_type:
+          type: string
+          enum: [disease, vaccine, feed, sanitation, other]
+        name: { type: string }
+        cost_cents: { type: integer }
+        currency: { type: string }
+        animal_count: { type: integer }
+        started_at: { type: string, format: date }
+        ended_at: { type: string, format: date, nullable: true }
+
+    Device:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        device_uid: { type: string }
+        type: { type: string, enum: [collar, ear_tag] }
+        battery_pct: { type: integer, nullable: true }
+        last_ping_at: { type: string, format: date-time, nullable: true }
+        animal_id: { type: string, format: uuid, nullable: true }
+        is_active: { type: boolean }
+
+paths:
+  # ─── AUTH ─────────────────────────────────────
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new user
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password]
+              properties:
+                name: { type: string }
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8 }
+      responses:
+        '201':
+          description: User created, tokens returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      access_token: { type: string }
+                      refresh_token: { type: string }
+                      user: { type: object }
+        '400': { description: Validation error }
+        '409': { description: Email already in use }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        '200':
+          description: Tokens returned
+        '401': { description: Invalid credentials }
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Refresh access token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        '200': { description: New access token }
+        '401': { description: Invalid or expired refresh token }
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Get current user
+      responses:
+        '200': { description: Current user info }
+
+  # ─── ANIMALS ──────────────────────────────────
+  /animals:
+    get:
+      tags: [Animals]
+      summary: List animals
+      parameters:
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: limit, in: query, schema: { type: integer, default: 20 } }
+        - { name: search, in: query, schema: { type: string } }
+        - { name: sex, in: query, schema: { type: string, enum: [male, female] } }
+        - { name: herd_id, in: query, schema: { type: string, format: uuid } }
+        - { name: zone_id, in: query, schema: { type: string, format: uuid } }
+        - { name: status, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: Paginated animal list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Pagination'
+                  - properties:
+                      data:
+                        items: { $ref: '#/components/schemas/Animal' }
+
+    post:
+      tags: [Animals]
+      summary: Create animal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ear_tag, sex]
+              properties:
+                ear_tag: { type: string }
+                name: { type: string }
+                sex: { type: string, enum: [male, female] }
+                breed: { type: string }
+                birth_date: { type: string, format: date }
+                herd_id: { type: string, format: uuid }
+      responses:
+        '201': { description: Animal created }
+        '402': { description: Animal limit reached (upgrade plan) }
+
+  /animals/{id}:
+    get:
+      tags: [Animals]
+      summary: Get animal detail
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Animal detail }
+        '404': { description: Not found }
+
+    put:
+      tags: [Animals]
+      summary: Update animal
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200': { description: Updated }
+
+    delete:
+      tags: [Animals]
+      summary: Archive animal (soft delete)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Archived }
+
+  /animals/{id}/activity:
+    get:
+      tags: [Animals]
+      summary: Get 7-day activity (km/day vs herd average)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Activity data array }
+
+  /animals/{id}/gps-track:
+    get:
+      tags: [Animals]
+      summary: Get GPS track
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: hours, in: query, schema: { type: integer, default: 24 } }
+      responses:
+        '200': { description: GPS points array }
+
+  /animals/agenda:
+    get:
+      tags: [Animals]
+      summary: Get 6-month agenda (births, reproductive alerts)
+      responses:
+        '200': { description: Agenda months array }
+
+  # ─── HEALTH EVENTS ────────────────────────────
+  /health-events:
+    get:
+      tags: [Health]
+      summary: List health events
+      parameters:
+        - { name: event_type, in: query, schema: { type: string } }
+        - { name: animal_id, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Health events array }
+
+    post:
+      tags: [Health]
+      summary: Create health event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HealthEvent'
+      responses:
+        '201': { description: Created }
+
+  /health-events/{id}:
+    get:
+      tags: [Health]
+      summary: Get health event
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Health event }
+
+    delete:
+      tags: [Health]
+      summary: Delete health event
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Deleted }
+
+  # ─── ZONES ────────────────────────────────────
+  /zones:
+    get:
+      tags: [Zones]
+      summary: List zones
+      responses:
+        '200': { description: Zones array }
+
+    post:
+      tags: [Zones]
+      summary: Create zone
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, geometry]
+              properties:
+                name: { type: string }
+                geometry:
+                  type: object
+                  description: GeoJSON Polygon
+                area_ha: { type: number }
+                grass_type: { type: string }
+      responses:
+        '201': { description: Zone created }
+
+  /zones/{id}/assign-animals:
+    post:
+      tags: [Zones]
+      summary: Assign animals to zone
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                animal_ids: { type: array, items: { type: string, format: uuid } }
+      responses:
+        '204': { description: Assigned }
+
+  # ─── DEVICES ──────────────────────────────────
+  /devices:
+    get:
+      tags: [Devices]
+      summary: List devices
+      responses:
+        '200': { description: Devices array }
+
+    post:
+      tags: [Devices]
+      summary: Register a new device
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [device_uid]
+              properties:
+                device_uid: { type: string }
+                type: { type: string, enum: [collar, ear_tag] }
+      responses:
+        '201':
+          description: Device created with API key (shown once only)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Device'
+                  - properties:
+                      api_key:
+                        type: string
+                        description: Store this securely — never shown again
+
+  /devices/{id}/assign:
+    post:
+      tags: [Devices]
+      summary: Assign device to animal
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                animal_id:
+                  type: string
+                  format: uuid
+                  nullable: true
+                  description: null to unassign
+      responses:
+        '204': { description: Assigned }
+
+  # ─── IoT GPS INGEST ───────────────────────────
+  /iot/gps:
+    post:
+      tags: [IoT]
+      summary: Ingest GPS data from device
+      security:
+        - apiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [animal_id, lat, lng]
+              properties:
+                animal_id: { type: string, format: uuid }
+                lat: { type: number }
+                lng: { type: number }
+                speed_kmh: { type: number }
+                battery_pct: { type: integer }
+                recorded_at: { type: string, format: date-time }
+      responses:
+        '201': { description: GPS point stored }
+        '401': { description: Invalid API key }
+
+  /iot/ws:
+    get:
+      tags: [IoT]
+      summary: WebSocket — real-time GPS stream for a farm
+      description: |
+        Upgrade to WebSocket. Connect with `?farm_id=<uuid>` and a valid JWT.
+        Receives JSON messages with `type: gps_update | alert | device_status`.
+      responses:
+        '101': { description: Switching Protocols (WebSocket upgrade) }
+
+  # ─── STATS ────────────────────────────────────
+  /stats/overview:
+    get:
+      tags: [Stats]
+      summary: Farm KPI overview
+      responses:
+        '200': { description: Overview metrics }
+
+  /stats/breeding:
+    get:
+      tags: [Stats]
+      summary: Breeding campaign stats
+      responses:
+        '200': { description: Pregnancy rate, birth rate, etc. }
+
+  /stats/fattening:
+    get:
+      tags: [Stats]
+      summary: Fattening stats (GMD per herd)
+      responses:
+        '200': { description: GMD array per herd }
+
+  /stats/profitability:
+    get:
+      tags: [Stats]
+      summary: Profitability overview
+      responses:
+        '200': { description: Health costs, sales count }
+
+  # ─── SUBSCRIPTION ─────────────────────────────
+  /subscription:
+    get:
+      tags: [Subscription]
+      summary: Get current subscription + available plans
+      responses:
+        '200': { description: Subscription and plans }
+
+  /subscription/checkout:
+    post:
+      tags: [Subscription]
+      summary: Create Stripe checkout session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plan_id, success_url, cancel_url]
+              properties:
+                plan_id: { type: string, enum: [basic, pro, enterprise] }
+                success_url: { type: string, format: uri }
+                cancel_url: { type: string, format: uri }
+      responses:
+        '200':
+          description: Stripe checkout URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      url: { type: string, format: uri }
+
+  /subscription/portal:
+    post:
+      tags: [Subscription]
+      summary: Create Stripe customer portal session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                return_url: { type: string, format: uri }
+      responses:
+        '200': { description: Portal URL }
+
+  /subscription/webhook:
+    post:
+      tags: [Subscription]
+      summary: Stripe webhook endpoint
+      security: []
+      description: Receives Stripe events (subscription created/updated/deleted).
+      responses:
+        '200': { description: Acknowledged }
+
+  # ─── MARKETPLACE ──────────────────────────────
+  /marketplace/products:
+    get:
+      tags: [Marketplace]
+      summary: List products
+      parameters:
+        - { name: category, in: query, schema: { type: string } }
+      responses:
+        '200': { description: Products array }
+
+  /marketplace/orders:
+    get:
+      tags: [Marketplace]
+      summary: List orders for farm
+      responses:
+        '200': { description: Orders array }
+
+    post:
+      tags: [Marketplace]
+      summary: Place an order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  items:
+                    type: object
+                    required: [product_id, quantity]
+                    properties:
+                      product_id: { type: string, format: uuid }
+                      quantity: { type: integer, minimum: 1 }
+                shipping_addr:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '201': { description: Order created }
+        '400': { description: Insufficient stock or product not found }

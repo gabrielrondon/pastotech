@@ -1,0 +1,27 @@
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Frontend
+frontend/.next/
+frontend/node_modules/
+frontend/out/
+frontend/.env.local
+
+# Backend
+backend/tmp/
+backend/*.exe
+
+# Docker
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Playwright
+.playwright-mcp/
+
+# Claude local settings
+.claude/settings.local.json
