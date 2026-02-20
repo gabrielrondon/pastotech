@@ -62,6 +62,8 @@ func main() {
 		fmt.Fprint(w, `{"status":"ok"}`)
 	})
 
+	r.Post("/admin/seed", NewSeedHandler(pool).Seed)
+
 	r.Route("/api/v1", func(r chi.Router) {
 		// Public routes
 		r.Mount("/auth", auth.NewHandler(pool, jwtSecret).Routes())
