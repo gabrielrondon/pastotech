@@ -9,6 +9,7 @@ echo "Database ready."
 
 echo "Running migrations..."
 psql "$DATABASE_URL" -f ./migrations/001_initial.sql 2>&1 || true
+psql "$DATABASE_URL" -f ./migrations/002_missing_tables.sql 2>&1 || true
 echo "Migrations done."
 
 exec ./api

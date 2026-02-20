@@ -99,7 +99,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.pool.Query(r.Context(), `
 		SELECT a.id, a.farm_id, a.herd_id, a.zone_id, a.ear_tag, a.name,
 		       a.sex, a.breed, a.birth_date, a.entry_reason, a.status,
-		       ST_Y(a.last_location::geometry), ST_X(a.last_location::geometry),
+		       NULL::float8, NULL::float8,
 		       a.last_seen_at,
 		       h.name AS herd_name, h.color AS herd_color,
 		       z.name AS zone_name
@@ -149,7 +149,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	err = h.pool.QueryRow(r.Context(), `
 		SELECT a.id, a.farm_id, a.herd_id, a.zone_id, a.ear_tag, a.name,
 		       a.sex, a.breed, a.birth_date, a.entry_reason, a.status,
-		       ST_Y(a.last_location::geometry), ST_X(a.last_location::geometry),
+		       NULL::float8, NULL::float8,
 		       a.last_seen_at,
 		       h.name AS herd_name, h.color AS herd_color,
 		       z.name AS zone_name

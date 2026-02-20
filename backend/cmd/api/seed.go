@@ -151,9 +151,9 @@ func (h *SeedHandler) Seed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Health events (event_type + name, no type/description)
+	// Health events (event_type + name + started_at; no updated_at in schema)
 	healthSQL := fmt.Sprintf(`
-		INSERT INTO health_events (id, farm_id, herd_id, event_type, name, animal_count, created_at, updated_at)
+		INSERT INTO health_events (id, farm_id, herd_id, event_type, name, animal_count, started_at, created_at)
 		VALUES
 			(gen_random_uuid(), '%s', '%s', 'vaccine', 'Vacinação Aftosa 2025', 15, NOW() - INTERVAL '45 days', NOW()),
 			(gen_random_uuid(), '%s', '%s', 'vaccine', 'Brucelose - Matrizes', 12, NOW() - INTERVAL '30 days', NOW()),
