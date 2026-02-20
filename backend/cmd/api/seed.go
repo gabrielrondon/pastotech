@@ -49,82 +49,79 @@ func (h *SeedHandler) Seed(w http.ResponseWriter, r *http.Request) {
 		herd2ID = "33333333-0000-0000-0000-000000000002"
 		herd3ID = "33333333-0000-0000-0000-000000000003"
 		herd4ID = "33333333-0000-0000-0000-000000000004"
-		zone1ID = "44444444-0000-0000-0000-000000000001"
-		zone2ID = "44444444-0000-0000-0000-000000000002"
-		zone3ID = "44444444-0000-0000-0000-000000000003"
-		zone4ID = "44444444-0000-0000-0000-000000000004"
 	)
 
-	steps := []string{
-		// User
-		fmt.Sprintf(`INSERT INTO users (id, name, email, password_hash, created_at, updated_at)
-			VALUES ('%s', 'Demo User', 'demo@cowpro.io', '%s', NOW(), NOW())
-			ON CONFLICT (email) DO NOTHING`, userID, string(hash)),
-
-		// Farm
-		fmt.Sprintf(`INSERT INTO farms (id, name, owner_id, location, area_ha, created_at, updated_at)
-			VALUES ('%s', 'Fazenda Demo', '%s', 'Mato Grosso do Sul, Brasil', 1500.0, NOW(), NOW())
-			ON CONFLICT (id) DO NOTHING`, farmID, userID),
-
-		// Farm member
-		fmt.Sprintf(`INSERT INTO farm_members (farm_id, user_id, role, created_at)
-			VALUES ('%s', '%s', 'owner', NOW())
-			ON CONFLICT (farm_id, user_id) DO NOTHING`, farmID, userID),
-
-		// Subscription
-		fmt.Sprintf(`INSERT INTO subscriptions (id, farm_id, plan, status, animal_limit, created_at, updated_at)
-			VALUES (gen_random_uuid(), '%s', 'pro', 'active', 500, NOW(), NOW())
-			ON CONFLICT DO NOTHING`, farmID),
-
-		// Herds
-		fmt.Sprintf(`INSERT INTO herds (id, farm_id, name, breed, purpose, created_at, updated_at) VALUES
-			('%s', '%s', 'Nelore Engorda', 'Nelore', 'beef', NOW(), NOW()),
-			('%s', '%s', 'Angus Engorda', 'Angus', 'beef', NOW(), NOW()),
-			('%s', '%s', 'Matrizes Nelore', 'Nelore', 'breeding', NOW(), NOW()),
-			('%s', '%s', 'Bezerros', 'Nelore', 'beef', NOW(), NOW())
-			ON CONFLICT (id) DO NOTHING`,
-			herd1ID, farmID, herd2ID, farmID, herd3ID, farmID, herd4ID, farmID),
-
-		// Zones
-		fmt.Sprintf(`INSERT INTO zones (id, farm_id, name, type, area_ha, created_at, updated_at) VALUES
-			('%s', '%s', 'Pasto Norte', 'pasture', 320.0, NOW(), NOW()),
-			('%s', '%s', 'Pasto Sul', 'pasture', 280.0, NOW(), NOW()),
-			('%s', '%s', 'Pasto Leste', 'pasture', 250.0, NOW(), NOW()),
-			('%s', '%s', 'Pasto Oeste', 'pasture', 200.0, NOW(), NOW())
-			ON CONFLICT (id) DO NOTHING`,
-			zone1ID, farmID, zone2ID, farmID, zone3ID, farmID, zone4ID, farmID),
+	type step struct {
+		name string
+		sql  string
 	}
 
-	for _, sql := range steps {
-		if _, err := tx.Exec(ctx, sql); err != nil {
-			response.Error(w, http.StatusInternalServerError, fmt.Sprintf("seed error: %v", err))
+	steps := []step{
+		{"user", fmt.Sprintf(
+			`INSERT INTO users (id, name, email, password_hash, created_at, updated_at)
+			 VALUES ('%s', 'Demo User', 'demo@cowpro.io', '%s', NOW(), NOW())
+			 ON CONFLICT (email) DO NOTHING`,
+			userID, string(hash),
+		)},
+		{"farm", fmt.Sprintf(
+			`INSERT INTO farms (id, name, owner_id, created_at, updated_at)
+			 VALUES ('%s', 'Fazenda Demo', '%s', NOW(), NOW())
+			 ON CONFLICT (id) DO NOTHING`,
+			farmID, userID,
+		)},
+		{"farm_member", fmt.Sprintf(
+			`INSERT INTO farm_members (farm_id, user_id, role, created_at)
+			 VALUES ('%s', '%s', 'owner', NOW())
+			 ON CONFLICT (farm_id, user_id) DO NOTHING`,
+			farmID, userID,
+		)},
+		{"subscription", fmt.Sprintf(
+			`INSERT INTO subscriptions (id, farm_id, plan, status, animal_limit, created_at, updated_at)
+			 VALUES (gen_random_uuid(), '%s', 'pro', 'active', 500, NOW(), NOW())
+			 ON CONFLICT (farm_id) DO UPDATE SET plan = 'pro', animal_limit = 500`,
+			farmID,
+		)},
+		{"herds", fmt.Sprintf(
+			`INSERT INTO herds (id, farm_id, name, color, created_at, updated_at) VALUES
+			 ('%s', '%s', 'Nelore Engorda', '#f59e0b', NOW(), NOW()),
+			 ('%s', '%s', 'Angus Engorda', '#3b82f6', NOW(), NOW()),
+			 ('%s', '%s', 'Matrizes Nelore', '#ec4899', NOW(), NOW()),
+			 ('%s', '%s', 'Bezerros', '#10b981', NOW(), NOW())
+			 ON CONFLICT (id) DO NOTHING`,
+			herd1ID, farmID, herd2ID, farmID, herd3ID, farmID, herd4ID, farmID,
+		)},
+	}
+
+	for _, s := range steps {
+		if _, err := tx.Exec(ctx, s.sql); err != nil {
+			response.Error(w, http.StatusInternalServerError, fmt.Sprintf("%s error: %v", s.name, err))
 			return
 		}
 	}
 
-	// Insert 40 animals across herds
+	// Animals: use ear_tag column (not tag)
 	animalSQL := fmt.Sprintf(`
-		INSERT INTO animals (id, farm_id, herd_id, tag, name, breed, sex, birth_date, weight_kg, status, created_at, updated_at)
+		INSERT INTO animals (id, farm_id, herd_id, ear_tag, species, breed, sex, birth_date, entry_reason, status, created_at, updated_at)
 		SELECT
 			gen_random_uuid(),
 			'%s',
 			herd_id,
 			'BR-' || LPAD(seq::text, 5, '0'),
-			NULL,
+			'bovine',
 			breed,
 			sex,
-			NOW() - (INTERVAL '1 day' * (365 + (random()*730)::int)),
-			300 + (random() * 250)::int,
+			(NOW() - (INTERVAL '1 day' * (365 + (random()*730)::int)))::date,
+			'birth',
 			'active',
 			NOW(), NOW()
 		FROM (
-			SELECT '%s' AS herd_id, 'Nelore' AS breed, 'M' AS sex, generate_series(1,15) AS seq
+			SELECT '%s'::uuid AS herd_id, 'Nelore' AS breed, 'M' AS sex, generate_series(1,15) AS seq
 			UNION ALL
-			SELECT '%s', 'Angus', 'M', generate_series(16,28)
+			SELECT '%s'::uuid, 'Angus', 'M', generate_series(16,28)
 			UNION ALL
-			SELECT '%s', 'Nelore', 'F', generate_series(29,40)
+			SELECT '%s'::uuid, 'Nelore', 'F', generate_series(29,40)
 			UNION ALL
-			SELECT '%s', 'Nelore', 'M', generate_series(41,48)
+			SELECT '%s'::uuid, 'Nelore', 'M', generate_series(41,48)
 		) t
 		ON CONFLICT DO NOTHING`,
 		farmID, herd1ID, herd2ID, herd3ID, herd4ID)
@@ -134,19 +131,43 @@ func (h *SeedHandler) Seed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Weight records for existing animals
+	// Weight records (recorded_at is DATE)
 	weightSQL := fmt.Sprintf(`
-		INSERT INTO weight_records (id, animal_id, weight_kg, recorded_at, created_at)
-		SELECT gen_random_uuid(), a.id,
-			a.weight_kg - (random()*80)::int + (generate_series * 10),
-			NOW() - (INTERVAL '30 days' * (6 - generate_series)),
+		INSERT INTO weight_records (id, animal_id, farm_id, weight_kg, recorded_at, created_at)
+		SELECT
+			gen_random_uuid(),
+			a.id,
+			'%s',
+			200 + (random() * 250)::int + gs * 8,
+			(NOW() - (INTERVAL '30 days' * (6 - gs)))::date,
 			NOW()
-		FROM animals a, generate_series(1,6)
+		FROM animals a, generate_series(1,6) gs
 		WHERE a.farm_id = '%s'
-		ON CONFLICT DO NOTHING`, farmID)
+		ON CONFLICT DO NOTHING`,
+		farmID, farmID)
 
 	if _, err := tx.Exec(ctx, weightSQL); err != nil {
-		response.Error(w, http.StatusInternalServerError, fmt.Sprintf("weight error: %v", err))
+		response.Error(w, http.StatusInternalServerError, fmt.Sprintf("weights error: %v", err))
+		return
+	}
+
+	// Health events (event_type + name, no type/description)
+	healthSQL := fmt.Sprintf(`
+		INSERT INTO health_events (id, farm_id, herd_id, event_type, name, animal_count, created_at, updated_at)
+		VALUES
+			(gen_random_uuid(), '%s', '%s', 'vaccine', 'Vacinação Aftosa 2025', 15, NOW() - INTERVAL '45 days', NOW()),
+			(gen_random_uuid(), '%s', '%s', 'vaccine', 'Brucelose - Matrizes', 12, NOW() - INTERVAL '30 days', NOW()),
+			(gen_random_uuid(), '%s', '%s', 'sanitation', 'Vermifugação Lote Engorda', 28, NOW() - INTERVAL '20 days', NOW()),
+			(gen_random_uuid(), '%s', '%s', 'feed', 'Suplemento mineral', 48, NOW() - INTERVAL '10 days', NOW())
+		ON CONFLICT DO NOTHING`,
+		farmID, herd1ID,
+		farmID, herd3ID,
+		farmID, herd2ID,
+		farmID, herd4ID,
+	)
+
+	if _, err := tx.Exec(ctx, healthSQL); err != nil {
+		response.Error(w, http.StatusInternalServerError, fmt.Sprintf("health error: %v", err))
 		return
 	}
 
@@ -154,10 +175,10 @@ func (h *SeedHandler) Seed(w http.ResponseWriter, r *http.Request) {
 	alertSQL := fmt.Sprintf(`
 		INSERT INTO alerts (id, farm_id, type, severity, message, is_read, created_at)
 		VALUES
-			(gen_random_uuid(), '%s', 'out_of_zone', 'warning', 'Animal BR-00003 saiu da Zona Pasto Norte', false, NOW() - INTERVAL '2 hours'),
+			(gen_random_uuid(), '%s', 'out_of_zone', 'warning', 'Animal BR-00003 saiu da área monitorada', false, NOW() - INTERVAL '2 hours'),
 			(gen_random_uuid(), '%s', 'device_offline', 'critical', 'Dispositivo GPS-011 offline há mais de 4h', false, NOW() - INTERVAL '5 hours'),
 			(gen_random_uuid(), '%s', 'low_activity', 'info', '3 animais com baixa atividade detectada', false, NOW() - INTERVAL '1 day'),
-			(gen_random_uuid(), '%s', 'out_of_zone', 'warning', 'Animal BR-00017 saiu da Zona Pasto Sul', true, NOW() - INTERVAL '2 days'),
+			(gen_random_uuid(), '%s', 'out_of_zone', 'warning', 'Animal BR-00017 saiu da área monitorada', true, NOW() - INTERVAL '2 days'),
 			(gen_random_uuid(), '%s', 'low_activity', 'info', 'Animal BR-00031 com atividade incomum', true, NOW() - INTERVAL '3 days')
 		ON CONFLICT DO NOTHING`,
 		farmID, farmID, farmID, farmID, farmID)
@@ -167,23 +188,13 @@ func (h *SeedHandler) Seed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Health events
-	healthSQL := fmt.Sprintf(`
-		INSERT INTO health_events (id, farm_id, type, description, event_date, created_at)
-		SELECT gen_random_uuid(), '%s', 'vaccination', 'Vacinação Aftosa - Lote ' || (row_number() OVER ()),
-			NOW() - (INTERVAL '1 day' * (random()*60)::int), NOW()
-		FROM generate_series(1, 5)
-		ON CONFLICT DO NOTHING`, farmID)
-
-	if _, err := tx.Exec(ctx, healthSQL); err != nil {
-		response.Error(w, http.StatusInternalServerError, fmt.Sprintf("health error: %v", err))
-		return
-	}
-
 	if err := tx.Commit(ctx); err != nil {
 		response.InternalError(w)
 		return
 	}
 
-	response.Ok(w, map[string]string{"status": "seeded", "message": "Demo data inserted successfully"})
+	response.Ok(w, map[string]any{
+		"status":  "seeded",
+		"message": "Demo data inserted successfully",
+	})
 }
